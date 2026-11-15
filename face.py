@@ -1,128 +1,380 @@
+"""face.py - the Desk Buddy's animated face (Pransu's part).
+
+What it gives Pranshu's engine (the agreement in the guide, section 4):
+
+    face.set_emotion("side_eye")      # idle focus side_eye talking happy sleepy
+    face.say("Not break time yet.")   # speech bubble + the mouth moves
+
+Two small extras so the engine can drive the little status strip above the face:
+
+    face.set_phase("FOCUS")           # left label  (any short text)
+    face.set_timer("24:59")           # right label (any short text)
+
+And an optional voice (needs `pip install pyttsx3`; does nothing if missing):
+
+    face.set_voice(True)              # returns False if pyttsx3 is not available
+
+The face is drawn like a 128 x 64 OLED screen: every "pixel" is a small square
+and thin black gaps between them give the lit-dot look. Everything eases
+smoothly between emotions, so changing mood never snaps.
 """
-face.py - Stand-in for Pransu's Animated Face Module (Section 4 Contract)
-Provides:
-  face.set_emotion(name)
-  face.say(text)
+import math
+import queue
+import random
+import threading
+import time
+import tkinter as tk
 
-Emotions: idle, focus, side_eye, talking, happy, sleepy
-"""
+import theme
 
-from typing import Optional
+EMOTIONS = ("idle", "focus", "side_eye", "talking", "happy", "sleepy")
 
-try:
-    import tkinter as tk
-except ImportError:
-    tk = None
+GRID_W, GRID_H = 128, 64      # the pretend OLED resolution
+PIXEL = 4                     # canvas pixels per OLED square
+FPS = 30
+BUBBLE_H = 84                 # height of the speech-bubble area, in canvas pixels
+
+# How each emotion looks, in OLED squares. `blink` = seconds between blinks.
+# eye_w/eye_h: size of each eye   dx/dy: shift of both eyes   brow: raised brow (0 to 1)
+# smile: mouth curve (0 flat, 1 big smile)   mouth_w: width of the mouth
+LOOKS = {
+    "idle":     dict(eye_w=24, eye_h=28, dx=0,  dy=0, brow=0.0, smile=0.25, mouth_w=16, blink=(2.5, 5.0)),
+    "focus":    dict(eye_w=26, eye_h=13, dx=0,  dy=5, brow=0.0, smile=0.0,  mouth_w=12, blink=(6.0, 10.0)),
+    "side_eye": dict(eye_w=24, eye_h=19, dx=12, dy=2, brow=1.0, smile=0.0,  mouth_w=12, blink=(3.0, 6.0)),
+    "talking":  dict(eye_w=24, eye_h=28, dx=0,  dy=0, brow=0.0, smile=0.0,  mouth_w=18, blink=(2.0, 4.0)),
+    "happy":    dict(eye_w=24, eye_h=10, dx=0,  dy=2, brow=0.0, smile=0.9,  mouth_w=24, blink=(99.0, 99.0)),
+    "sleepy":   dict(eye_w=26, eye_h=5,  dx=0,  dy=7, brow=0.0, smile=0.0,  mouth_w=8,  blink=(7.0, 11.0)),
+}
+_EASED = ("eye_w", "eye_h", "dx", "dy", "brow", "smile", "mouth_w")
+
+EYE_Y = 24                    # vertical centre of the eyes (OLED squares)
+EYE_GAP = 26                  # each eye sits this far left/right of the centre
+MOUTH_Y = 51
 
 
-class Face:
-    """
-    Animated Face Controller satisfying the Section 4 Contract.
-    Can drive a Tkinter canvas OLED representation or console output.
-    """
+class _Voice:
+    """Optional spoken lines using pyttsx3. A silent no-op if it is not installed."""
 
-    def __init__(self, canvas=None, speech_label=None, window=None):
-        self.canvas = canvas
-        self.speech_label = speech_label
-        self.window = window
-        self.current_emotion = "idle"
-        self._previous_emotion = "idle"
-        self._say_timer = None
+    def __init__(self):
+        self.enabled = False
+        self._queue = queue.Queue()
+        self._thread = None
 
-        if self.canvas is not None:
-            self._draw_face()
+    def enable(self, on):
+        if not on:
+            self.enabled = False
+            return True
+        if self._thread is None:
+            try:
+                import pyttsx3  # noqa: F401  (only checking that it exists)
+            except Exception:
+                return False
+            self._thread = threading.Thread(target=self._worker, daemon=True)
+            self._thread.start()
+        self.enabled = True
+        return True
 
-    def set_emotion(self, name: str) -> None:
-        """Sets the active emotion: idle, focus, side_eye, talking, happy, sleepy."""
-        self.current_emotion = name
-        print(f"[FACE] Emotion changed to: {name}")
-        if self.canvas is not None:
-            self._draw_face()
+    def say(self, text):
+        if self.enabled:
+            self._queue.put(text)
 
-    def say(self, text: str) -> None:
-        """
-        Shows text in the speech bubble, displays talking mouth,
-        and reverts to previous mood after ~3 seconds per Section 6 Step 5.
-        """
-        print(f'[FACE] Speech Bubble: "{text}"')
-        self._previous_emotion = self.current_emotion
-        self.current_emotion = "talking"
-
-        if self.speech_label and hasattr(self.speech_label, "config"):
-            self.speech_label.config(text=f'"{text}"')
-
-        if self.canvas is not None:
-            self._draw_face()
-
-        # Revert back after 3 seconds
-        if self.window is not None and hasattr(self.window, "after"):
-            if self._say_timer is not None:
-                try:
-                    self.window.after_cancel(self._say_timer)
-                except Exception:
-                    pass
-            self._say_timer = self.window.after(3000, self._revert_emotion)
-
-    def _revert_emotion(self) -> None:
-        self.current_emotion = self._previous_emotion
-        if self.canvas is not None:
-            self._draw_face()
-
-    def _draw_face(self) -> None:
-        """Draws OLED-style face on canvas using rectangular blocks."""
-        if self.canvas is None:
+    def _worker(self):
+        try:
+            import pyttsx3
+            engine = pyttsx3.init()
+        except Exception:
+            self.enabled = False
             return
+        while True:
+            text = self._queue.get()
+            try:
+                engine.say(text)
+                engine.runAndWait()
+            except Exception:
+                pass
 
-        self.canvas.delete("all")
-        w = int(self.canvas.cget("width"))
-        h = int(self.canvas.cget("height"))
 
-        # OLED background
-        self.canvas.create_rectangle(0, 0, w, h, fill="#0d1117", outline="")
+class Face(tk.Frame):
+    """The whole face widget: status strip, OLED screen and speech bubble."""
 
-        emo = self.current_emotion
+    def __init__(self, parent, pixel=PIXEL):
+        super().__init__(parent, bg=theme.BG)
+        self.px = pixel
+        self._cw = GRID_W * pixel
+        self._ch = GRID_H * pixel
 
-        # Eyes: Left and Right
-        eye_color = "#00e5ff"
-        if emo == "idle":
-            # Normal open eyes
-            self.canvas.create_rectangle(80, 45, 120, 85, fill=eye_color, outline="")
-            self.canvas.create_rectangle(180, 45, 220, 85, fill=eye_color, outline="")
-            # Mouth: gentle neutral line
-            self.canvas.create_rectangle(135, 105, 165, 110, fill=eye_color, outline="")
-        elif emo == "focus":
-            # Half-closed, calm
-            self.canvas.create_rectangle(80, 58, 120, 80, fill=eye_color, outline="")
-            self.canvas.create_rectangle(180, 58, 220, 80, fill=eye_color, outline="")
-            # Calm flat mouth
-            self.canvas.create_rectangle(135, 105, 165, 109, fill=eye_color, outline="")
-        elif emo == "side_eye":
-            # Pupils shifted to one side, one brow raised
-            self.canvas.create_rectangle(80, 48, 105, 85, fill=eye_color, outline="")
-            self.canvas.create_rectangle(180, 48, 205, 85, fill=eye_color, outline="")
-            # Raised eyebrow on right
-            self.canvas.create_rectangle(175, 35, 225, 40, fill="#ffd600", outline="")
-            # Skeptical smirk
-            self.canvas.create_rectangle(130, 105, 170, 110, fill=eye_color, outline="")
-        elif emo == "talking":
-            # Open eyes and open mouth
-            self.canvas.create_rectangle(80, 45, 120, 85, fill=eye_color, outline="")
-            self.canvas.create_rectangle(180, 45, 220, 85, fill=eye_color, outline="")
-            # Open rectangular mouth
-            self.canvas.create_rectangle(130, 98, 170, 118, fill=eye_color, outline="")
-        elif emo == "happy":
-            # Upward arc smile eyes
-            self.canvas.create_polygon(80, 75, 100, 50, 120, 75, fill=eye_color)
-            self.canvas.create_polygon(180, 75, 200, 50, 220, 75, fill=eye_color)
-            # Smile mouth
-            self.canvas.create_polygon(125, 100, 150, 122, 175, 100, fill=eye_color)
-        elif emo == "sleepy":
-            # Low droopy eyelids
-            self.canvas.create_rectangle(80, 70, 120, 85, fill=eye_color, outline="")
-            self.canvas.create_rectangle(180, 70, 220, 85, fill=eye_color, outline="")
-            # Relaxed small mouth
-            self.canvas.create_rectangle(140, 105, 160, 108, fill=eye_color, outline="")
-        else:
-            # Fallback
-            self.canvas.create_rectangle(80, 45, 120, 85, fill=eye_color, outline="")
-            self.canvas.create_rectangle(180, 45, 220, 85, fill=eye_color, outline="")
+        # ---- status strip (phase on the left, timer on the right) ----------
+        strip = tk.Frame(self, bg=theme.BG, width=self._cw)
+        strip.pack(fill="x", pady=(0, 6))
+        self._phase = tk.Label(strip, text="READY", bg=theme.BG, fg=theme.MUTED,
+                               font=theme.font(11, "bold", mono=True, root=self))
+        self._phase.pack(side="left")
+        self._timer = tk.Label(strip, text="--:--", bg=theme.BG, fg=theme.TEXT,
+                               font=theme.font(20, "bold", mono=True, root=self))
+        self._timer.pack(side="right")
+
+        # ---- the OLED screen -----------------------------------------------
+        self.canvas = tk.Canvas(self, width=self._cw, height=self._ch, bg=theme.OLED_BG,
+                                highlightthickness=2, highlightbackground=theme.BORDER)
+        self.canvas.pack()
+        self._draw_pixel_gaps()
+
+        # ---- speech bubble -------------------------------------------------
+        self.bubble = tk.Canvas(self, width=self._cw, height=BUBBLE_H, bg=theme.BG,
+                                highlightthickness=0)
+        self.bubble.pack(pady=(4, 0))
+
+        # ---- state ---------------------------------------------------------
+        self._emotion = "idle"
+        self._cur = {k: float(LOOKS["idle"][k]) for k in _EASED}
+        now = time.monotonic()
+        self._blink_start = None
+        self._next_blink = now + random.uniform(*LOOKS["idle"]["blink"])
+        self._wander = 0.0
+        self._next_wander = now + random.uniform(2.0, 4.0)
+        self._speak_until = 0.0
+        self._bubble_text = ""
+        self._bubble_drawn = None
+        self._voice = _Voice()
+        self._job = None
+        self._tick()
+
+    # ------------------------------------------------------------------ API
+    def set_emotion(self, name):
+        """Change the mood. Unknown names are ignored (with a console warning)."""
+        if name not in LOOKS:
+            print(f"[face] unknown emotion {name!r}; use one of {EMOTIONS}")
+            return
+        self._emotion = name
+
+    def get_emotion(self):
+        return self._emotion
+
+    def say(self, text, seconds=None):
+        """Show `text` in the bubble; the mouth moves while it is shown."""
+        text = str(text).strip()
+        if not text:
+            return
+        if seconds is None:
+            seconds = max(3.0, min(8.0, len(text) / 13.0))
+        self._bubble_text = text
+        self._speak_until = time.monotonic() + seconds
+        self._voice.say(text)
+
+    def clear(self):
+        """Hide the speech bubble straight away."""
+        self._speak_until = 0.0
+
+    def set_phase(self, text):
+        self._phase.config(text=str(text).upper())
+
+    def set_timer(self, text):
+        self._timer.config(text=str(text))
+
+    def bind_engine(self, engine):
+        """Show the engine's countdown and state in the status strip.
+
+        Uses the engine's own `add_timer_listener(callback(remaining_seconds, state))`
+        hook. Call it once after creating the engine:   face.bind_engine(engine)
+        Without this call the Buddy still works; the strip just keeps its defaults.
+        """
+        names = {"idle": "READY", "focus": "FOCUS", "break": "BREAK"}
+
+        def on_tick(remaining, state):
+            if state == "idle" and not remaining:
+                remaining = getattr(engine, "focus_duration", 0)
+            remaining = max(0, int(remaining))
+            self.set_timer(f"{remaining // 60:02d}:{remaining % 60:02d}")
+            self.set_phase(names.get(state, state))
+
+        engine.add_timer_listener(on_tick)
+        on_tick(getattr(engine, "remaining_seconds", 0), getattr(engine, "state", "idle"))
+
+    def set_voice(self, on=True):
+        """Turn spoken lines on or off. Returns False if pyttsx3 is not installed."""
+        return self._voice.enable(bool(on))
+
+    def destroy(self):
+        if self._job is not None:
+            try:
+                self.after_cancel(self._job)
+            except tk.TclError:
+                pass
+            self._job = None
+        super().destroy()
+
+    # ------------------------------------------------------------ animation
+    def _tick(self):
+        now = time.monotonic()
+        self._update_state(now)
+        self._draw_face(now)
+        self._draw_bubble(now)
+        self._job = self.after(int(1000 / FPS), self._tick)
+
+    def _update_state(self, now):
+        look = LOOKS[self._emotion]
+
+        # ease every number a little closer to the target look
+        target = dict(look)
+        if self._emotion == "idle":                       # gentle looking around
+            if now >= self._next_wander:
+                self._wander = random.uniform(-4.0, 4.0)
+                self._next_wander = now + random.uniform(2.5, 5.5)
+            target["dx"] = look["dx"] + self._wander
+        for k in _EASED:
+            self._cur[k] += (target[k] - self._cur[k]) * 0.2
+
+        # blinking
+        if self._blink_start is None and now >= self._next_blink and self._emotion != "happy":
+            self._blink_start = now
+        if self._blink_start is not None and now - self._blink_start > 0.18:
+            self._blink_start = None
+            self._next_blink = now + random.uniform(*look["blink"])
+
+    def _blink_factor(self, now):
+        if self._blink_start is None:
+            return 1.0
+        u = (now - self._blink_start) / 0.18
+        return 1.0 - math.sin(math.pi * min(max(u, 0.0), 1.0))
+
+    def _mouth_open(self, now):
+        talking = self._emotion == "talking" or now < self._speak_until
+        if not talking:
+            return 0.0
+        return 0.5 + 0.5 * math.sin(now * 13.0 + 0.8 * math.sin(now * 3.1))
+
+    # -------------------------------------------------------------- drawing
+    def _draw_pixel_gaps(self):
+        """Thin black lines over the screen give the lit-pixel OLED look."""
+        px = self.px
+        for gx in range(1, GRID_W):
+            self.canvas.create_line(gx * px, 0, gx * px, self._ch, fill=theme.OLED_BG, tags="grid")
+        for gy in range(1, GRID_H):
+            self.canvas.create_line(0, gy * px, self._cw, gy * px, fill=theme.OLED_BG, tags="grid")
+
+    def _chamfer(self, cx, cy, w, h, **kw):
+        """A rectangle with cut corners (looks right on a pixel screen)."""
+        px = self.px
+        x0, x1, y0, y1 = cx - w / 2, cx + w / 2, cy - h / 2, cy + h / 2
+        c = max(0.5, min(4.0, w / 2.5, h / 2.5))
+        pts = [x0 + c, y0, x1 - c, y0, x1, y0 + c, x1, y1 - c,
+               x1 - c, y1, x0 + c, y1, x0, y1 - c, x0, y0 + c]
+        self.canvas.create_polygon([v * px for v in pts], tags="dyn", **kw)
+
+    def _draw_face(self, now):
+        c, px, p = self.canvas, self.px, self._cur
+        c.delete("dyn")
+        on = theme.OLED_ON
+        happy = self._emotion == "happy"
+        eye_h = max(1.5, p["eye_h"] * self._blink_factor(now))
+        cy = EYE_Y + p["dy"]
+        centres = (64 - EYE_GAP + p["dx"], 64 + EYE_GAP + p["dx"])
+
+        for i, cx in enumerate(centres):
+            if happy:
+                # smiling eyes: an upside-down U
+                arc_h = 9
+                c.create_arc((cx - p["eye_w"] / 2) * px, (cy + 3 - arc_h) * px,
+                             (cx + p["eye_w"] / 2) * px, (cy + 3 + arc_h) * px,
+                             start=0, extent=180, style="arc", outline=on,
+                             width=4.5 * px, tags="dyn")
+            else:
+                self._chamfer(cx, cy, p["eye_w"], eye_h, fill=on, outline="")
+            if p["brow"] > 0.05:                         # one raised brow = "really?"
+                b = p["brow"]
+                top = cy - p["eye_h"] / 2
+                if i == 0:
+                    y1 = y2 = top - 3
+                else:
+                    y1, y2 = top - 3 - 2 * b, top - 3 - 6 * b
+                c.create_line((cx - p["eye_w"] / 2) * px, y1 * px,
+                              (cx + p["eye_w"] / 2) * px, y2 * px,
+                              fill=on, width=2.4 * px, tags="dyn")
+
+        self._draw_mouth(now)
+        if self._emotion == "sleepy":
+            self._draw_zzz(now)
+        c.tag_raise("grid")
+
+    def _draw_mouth(self, now):
+        c, px, p = self.canvas, self.px, self._cur
+        mx = 64 + p["dx"] * 0.5
+        mw, s = p["mouth_w"], p["smile"]
+        opened = self._mouth_open(now)
+        if opened > 0.15:                                 # talking: a mouth that opens and closes
+            self._chamfer(mx, MOUTH_Y + 2, mw * 0.6, 2 + 9 * opened, fill=theme.OLED_ON, outline="")
+        elif s > 0.08:                                    # smile: lower half of an ellipse
+            sh = mw * 0.35 * s
+            c.create_arc((mx - mw / 2) * px, (MOUTH_Y - sh) * px,
+                         (mx + mw / 2) * px, (MOUTH_Y + sh) * px,
+                         start=180, extent=180, style="arc", outline=theme.OLED_ON,
+                         width=2.6 * px, tags="dyn")
+        else:                                             # flat mouth
+            self._chamfer(mx, MOUTH_Y + 1, mw, 2.6, fill=theme.OLED_ON, outline="")
+
+    def _draw_zzz(self, now):
+        """Little floating z's that appear one after another when sleepy."""
+        phase = (now % 3.2) / 3.2
+        bob = 1.5 * math.sin(now * 1.6)
+        f = theme.font(-int(self.px * 6), "bold", mono=True, root=self)
+        if phase > 0.15:
+            self.canvas.create_text(100 * self.px, (22 + bob) * self.px, text="z", font=f,
+                                    fill=theme.OLED_DIM, tags="dyn")
+        if phase > 0.45:
+            f2 = theme.font(-int(self.px * 9), "bold", mono=True, root=self)
+            self.canvas.create_text(111 * self.px, (11 + bob) * self.px, text="Z", font=f2,
+                                    fill=theme.OLED_DIM, tags="dyn")
+
+    # ---------------------------------------------------------- speech bubble
+    def _draw_bubble(self, now):
+        showing = now < self._speak_until
+        key = self._bubble_text if showing else None
+        if key == self._bubble_drawn:
+            return
+        self._bubble_drawn = key
+        b = self.bubble
+        b.delete("all")
+        if not showing:
+            return
+        w, h = self._cw, BUBBLE_H
+        cx = w / 2
+        b.create_polygon(cx - 10, 14, cx, 3, cx + 10, 14, fill=theme.PANEL, outline=theme.BORDER)
+        pts = [18, 12, w - 18, 12, w - 2, 12, w - 2, 30, w - 2, h - 18, w - 2, h - 4,
+               w - 18, h - 4, 18, h - 4, 2, h - 4, 2, h - 18, 2, 30, 2, 12]
+        b.create_polygon(pts, smooth=True, fill=theme.PANEL, outline=theme.BORDER)
+        b.create_rectangle(cx - 9, 11, cx + 9, 13.5, fill=theme.PANEL, outline="")
+        b.create_text(cx, (12 + h - 4) / 2, text=self._bubble_text, width=w - 70,
+                      justify="center", fill=theme.TEXT,
+                      font=theme.font(14, root=self))
+
+
+# ---------------------------------------------------------------------------
+# Standalone test:   python3 face.py
+# Keys 1-6 change the mood, Space says a line, Q quits.
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    _SAMPLE_LINES = ("Not break time yet, 14 minutes to go. Want a break now?",
+                     "Welcome back.", "Almost there. Just a few more minutes.")
+    _root = tk.Tk()
+    _root.title("Face test")
+    _root.configure(bg=theme.BG)
+    _face = Face(_root)
+    _face.pack(padx=24, pady=(20, 8))
+    _face.set_timer("25:00")
+    tk.Label(_root, bg=theme.BG, fg=theme.MUTED, font=theme.font(9, mono=True, root=_root),
+             text="1 idle  2 focus  3 side-eye  4 talking  5 happy  6 sleepy\n"
+                  "Space say a line   Q quit").pack(pady=(0, 16))
+
+    def _on_key(event):
+        key = event.keysym.lower()
+        if len(key) == 1 and key in "123456":
+            name = EMOTIONS[int(key) - 1]
+            _face.set_emotion(name)
+            _face.set_phase(name.replace("_", " "))
+        elif key == "space":
+            _face.say(random.choice(_SAMPLE_LINES))
+        elif key in ("q", "escape"):
+            _root.destroy()
+
+    _root.bind("<Key>", _on_key)
+    _root.mainloop()
