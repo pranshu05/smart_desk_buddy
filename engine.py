@@ -118,6 +118,7 @@ class Engine:
 
         if self.state == "idle":
             self.remaining_seconds = self.focus_duration
+            self._notify_timer()
 
     def add_timer_listener(self, callback: Callable[[int, str], None]) -> None:
         """Register a callback for timer updates: callback(remaining_seconds, state)."""
