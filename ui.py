@@ -44,11 +44,12 @@ def _card(parent):
     return outer, inner
 
 
-def build_window(placeholders=False, debug_keys=False):
+def build_window(placeholders=False, debug_keys=False, voice=True):
     """Create the window. Returns (root, face, panels).
 
     placeholders: put a grey note in each empty frame (handy when testing alone)
     debug_keys:   keys 1-6, Space, S and Q for trying things without the engine
+    voice:        speak the buddy's lines aloud (needs `pip install pyttsx3`; silent if missing)
     """
     root = tk.Tk()
     root.title("Smart Desk Buddy")
@@ -80,6 +81,8 @@ def build_window(placeholders=False, debug_keys=False):
             tk.Label(inner, text=PLACEHOLDERS[name], bg=theme.PANEL, fg=theme.MUTED,
                      font=theme.font(10, root=root)).pack(pady=18)
 
+    if voice and not face.set_voice(True):
+        print("Voice is off: run  pip install pyttsx3  to hear the buddy.")
     if debug_keys:
         _bind_debug_keys(root, face)
     return root, face, panels
