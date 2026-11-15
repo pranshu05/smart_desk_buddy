@@ -1,126 +1,209 @@
+"""summary.py - the end-of-session screen (Pransu's part).
+
+    from summary import show_summary, summarize
+
+    show_summary(log)                              # log = [(minute, "FIDGET"), ...]
+    show_summary(log, session_length=25)           # how long the session was (default: guessed)
+    show_summary(log, session_length=60, unit="sec")   # for demo mode, where a session is seconds
+
+It draws one lane per kind of interruption with a dot for each time it happened,
+and one calm sentence such as "Focus dipped most around minute 18 to 22."
+No scores, no blame: it only makes the pattern visible.
+
+`summarize(log)` does the counting without opening any window. Pranshu can use
+`summarize(log)["sentence"]` as the answer to "how am I doing?" in the chat box.
 """
-summary.py - Stand-in for Pransu's Summary Screen Module (Section 4 Contract)
-Provides:
-  show_summary(log)
+import math
+import tkinter as tk
 
-HCI Principles:
-- Non-judgmental feedback: shows interruption timeline, count for each kind,
-  and a neutral sentence. No scores and no blame.
-"""
+import theme
 
-from typing import List, Tuple
-
-try:
-    import tkinter as tk
-    from tkinter import ttk
-except ImportError:
-    tk = None
-    ttk = None
+# The kinds of event that count as an interruption, in the order the lanes appear.
+KINDS = (
+    ("FIDGET", "Fidget"),
+    ("SEAT_LEAVE", "Left seat"),
+    ("TAB_SWITCH", "Tab switch"),
+    ("PHONE", "Phone"),
+)
+KIND_NAMES = dict(KINDS)
 
 
-def generate_neutral_sentence(log: List[Tuple[int, str]]) -> str:
-    """Computes a neutral observation sentence from the log without scores or blame."""
-    interruptions = [m for m, ev in log if ev in ("FIDGET", "SEAT_LEAVE", "TAB_SWITCH", "PHONE")]
-    if not interruptions:
-        return "You maintained continuous focus throughout the session with zero interruptions."
+# ---------------------------------------------------------------- the maths
+def _interruptions(log):
+    """Keep only the interruption events, as sorted (minute, NAME) pairs."""
+    out = []
+    for item in log or []:
+        try:
+            minute, name = item
+            name = str(getattr(name, "name", name)).upper()
+            if name in KIND_NAMES:
+                out.append((float(minute), name))
+        except (TypeError, ValueError):
+            continue            # ignore anything that is not a (minute, name) pair
+    return sorted(out)
 
-    min_m = min(interruptions)
-    max_m = max(interruptions)
 
-    if len(interruptions) == 1:
-        return f"Only one brief interruption occurred at minute {min_m}."
-    elif min_m == max_m:
-        return f"Focus dipped briefly around minute {min_m}."
-    elif max_m - min_m <= 4:
-        return f"Focus dipped most around minute {min_m} to {max_m}."
+def _at(m, unit):
+    m = int(round(m))
+    return f"minute {m}" if unit == "min" else f"{m} seconds"
+
+
+def _span(a, b, unit):
+    return f"minute {a} to {b}" if unit == "min" else f"{a} to {b} seconds"
+
+
+def _plural(n, word):
+    return f"{n} {word}" if n == 1 else f"{n} {word}s"
+
+
+def summarize(log, session_length=None, unit="min"):
+    """Count the interruptions and find the busiest stretch. Returns a dict."""
+    events = _interruptions(log)
+    last = max((m for m, _ in events), default=0.0)
+    # Default timeline is the standard 25-minute session; it only grows if the log is longer.
+    default = 25 if unit == "min" else max(math.ceil(last) + 1, 5)
+    length = session_length or default
+    length = max(length, last)
+    counts = {k: 0 for k, _ in KINDS}
+    for _, name in events:
+        counts[name] += 1
+    total = len(events)
+
+    # busiest stretch = the window (about 1/6 of the session) holding the most events;
+    # on a tie, the tighter cluster wins, then the earlier one
+    width = max(1.0, round(length / 6.0))
+    best_key, best_inside = None, []
+    for start, _ in events:
+        inside = [m for m, _ in events if start <= m <= start + width]
+        key = (len(inside), -(max(inside) - min(inside)))
+        if best_key is None or key > best_key:
+            best_key, best_inside = key, inside
+    peak = None
+    if best_key is not None and best_key[0] >= 2:
+        lo, hi = min(best_inside), max(best_inside)
+        w = int(width)
+        a = int(math.floor((lo + hi) / 2 - w / 2 + 0.5))      # centre the stretch on the cluster
+        a = max(0, min(a, int(math.floor(lo))))               # ...but never cut an event off
+        b = max(a + w, int(math.ceil(hi)))
+        b = min(b, int(math.ceil(length)))
+        peak = (a, max(b, a + 1))
+
+    if total == 0:
+        sentence = "No interruptions this session. Steady from start to finish."
+    elif total == 1:
+        sentence = f"One interruption, around {_at(events[0][0], unit)}."
+    elif peak is None:
+        sentence = "Interruptions were spread out; no single stretch stood out."
     else:
-        return f"Interruption markers were distributed between minute {min_m} and minute {max_m}."
+        sentence = f"Focus dipped most around {_span(peak[0], peak[1], unit)}."
+
+    unit_word = "minute" if unit == "min" else "second"
+    length_text = _plural(int(round(length)), unit_word)
+    return {
+        "events": events, "counts": counts, "total": total, "length": length,
+        "peak": peak, "unit": unit, "sentence": sentence,
+        "caption": f"{_plural(total, 'interruption')} in {length_text}",
+    }
 
 
-def show_summary(log: List[Tuple[int, str]]) -> None:
-    """
-    Draws the end-of-session screen from the event log.
+# ------------------------------------------------------------- the window
+def _nice_step(length):
+    for step in (1, 2, 5, 10, 15, 20, 30, 60, 120, 300, 600):
+        if length / step <= 8:
+            return step
+    return 600
 
-    Args:
-        log: list of (minute, event_name) pairs
-    """
-    sentence = generate_neutral_sentence(log)
 
-    print("\n" + "=" * 55)
-    print("         END-OF-SESSION FOCUS SUMMARY          ")
-    print("=" * 55)
-    print("Timeline of Events:")
-    counts = {}
-    for minute, ev in log:
-        print(f"  [Min {minute:02d}] {ev}")
-        counts[ev] = counts.get(ev, 0) + 1
+def show_summary(log, session_length=None, unit="min", parent=None):
+    """Open the summary window. Returns the Toplevel."""
+    data = summarize(log, session_length, unit)
+    owns_root = False
+    if parent is None:
+        parent = tk._default_root
+    if parent is None:                       # run on its own (python summary.py)
+        parent = tk.Tk()
+        parent.withdraw()
+        owns_root = True
 
-    print("\nInterruption Counts:")
-    for ev in ("FIDGET", "SEAT_LEAVE", "TAB_SWITCH", "PHONE"):
-        print(f"  - {ev}: {counts.get(ev, 0)}")
+    win = tk.Toplevel(parent)
+    win.title("Session summary")
+    win.configure(bg=theme.BG)
+    win.resizable(False, False)
+    if not owns_root:
+        win.transient(parent.winfo_toplevel())
 
-    print(f"\nNeutral Observation:\n  \"{sentence}\"")
-    print("(Non-judgmental feedback: no scores, no grades, no blame)")
-    print("=" * 55 + "\n")
+    pad = 28
+    tk.Label(win, text="SESSION SUMMARY", bg=theme.BG, fg=theme.MUTED,
+             font=theme.font(10, "bold", mono=True, root=win)).pack(anchor="w", padx=pad, pady=(22, 2))
+    tk.Label(win, text=data["sentence"], bg=theme.BG, fg=theme.TEXT, justify="left",
+             wraplength=680, font=theme.font(18, "bold", root=win)).pack(anchor="w", padx=pad)
+    tk.Label(win, text=data["caption"], bg=theme.BG, fg=theme.MUTED,
+             font=theme.font(11, root=win)).pack(anchor="w", padx=pad, pady=(2, 14))
 
-    if tk is None:
-        return
+    _draw_timeline(win, data).pack(padx=pad)
 
-    try:
-        dialog = tk.Toplevel()
-        dialog.title("Smart Desk Buddy - End of Session Summary")
-        dialog.geometry("520x440")
-        dialog.configure(bg="#121212")
+    row = tk.Frame(win, bg=theme.BG)
+    row.pack(fill="x", padx=pad, pady=(14, 22))
+    theme.button(row, "Close", win.destroy, accent=True).pack(side="right")
 
-        header = tk.Label(
-            dialog,
-            text="Session Summary",
-            font=("Helvetica", 14, "bold"),
-            fg="#80cbc4",
-            bg="#121212",
-            pady=10,
-        )
-        header.pack()
+    win.bind("<Escape>", lambda _e: win.destroy())
+    if owns_root:                            # standalone run: closing the window ends the program
+        win.bind("<Destroy>", lambda e: parent.quit() if e.widget is win else None)
+    win.focus_set()
+    return win
 
-        # Canvas Timeline
-        canvas = tk.Canvas(dialog, width=460, height=80, bg="#1e1e1e", highlightthickness=0)
-        canvas.pack(pady=8)
 
-        # Baseline axis (representing minutes 0 to 25)
-        canvas.create_line(30, 45, 430, 45, fill="#555555", width=2)
-        canvas.create_text(30, 62, text="0m", fill="#888888", font=("Helvetica", 8))
-        canvas.create_text(230, 62, text="12m", fill="#888888", font=("Helvetica", 8))
-        canvas.create_text(430, 62, text="25m", fill="#888888", font=("Helvetica", 8))
+def _draw_timeline(master, data):
+    W, lane_h, top = 704, 42, 34
+    lanes = len(KINDS)
+    axis_y = top + lanes * lane_h + 8
+    H = axis_y + 34
+    x0, x1 = 150, W - 70
+    length = data["length"]
 
-        color_map = {
-            "FIDGET": "#3d5afe",
-            "SEAT_LEAVE": "#ff9100",
-            "TAB_SWITCH": "#aa00ff",
-            "PHONE": "#d50000",
-            "SESSION_START": "#00c853",
-            "BREAK_REQUEST": "#ffca28",
-        }
+    def X(m):
+        return x0 + (m / length) * (x1 - x0)
 
-        # Draw markers on timeline
-        for minute, ev in log:
-            x = 30 + int((min(25, max(0, minute)) / 25.0) * 400)
-            col = color_map.get(ev, "#ffffff")
-            canvas.create_line(x, 25, x, 45, fill=col, width=3)
-            canvas.create_oval(x - 4, 20, x + 4, 28, fill=col, outline="")
+    c = tk.Canvas(master, width=W, height=H, bg=theme.BG, highlightthickness=0)
 
-        # Summary text box
-        txt_box = tk.Text(dialog, wrap="word", height=9, font=("Helvetica", 10), bg="#1e1e1e", fg="#e0e0e0", bd=0, padx=10, pady=8)
-        txt_box.pack(fill="x", padx=24, pady=6)
+    # the busiest stretch, as a soft band behind everything
+    if data["peak"]:
+        a, b = data["peak"]
+        c.create_rectangle(X(a), top - 14, X(b), axis_y, fill="#1a2431", outline="")
+        c.create_text((X(a) + X(b)) / 2, top - 22, text="busiest stretch",
+                      fill=theme.MUTED, font=theme.font(9, root=master))
 
-        txt_box.insert("end", f"Key Finding: {sentence}\n\n", "bold")
-        txt_box.insert("end", "Recorded Interruptions:\n")
-        txt_box.insert("end", f"  • Fidgeting: {counts.get('FIDGET', 0)}\n")
-        txt_box.insert("end", f"  • Seat departures: {counts.get('SEAT_LEAVE', 0)}\n")
-        txt_box.insert("end", f"  • Tab switches: {counts.get('TAB_SWITCH', 0)}\n")
-        txt_box.insert("end", f"  • Phone pickups: {counts.get('PHONE', 0)}\n")
-        txt_box.config(state="disabled")
+    # time axis with gridlines
+    step = _nice_step(length)
+    t = 0
+    while t <= length + 1e-9:
+        c.create_line(X(t), top - 14, X(t), axis_y, fill=theme.BORDER, dash=(2, 4))
+        c.create_text(X(t), axis_y + 14, text=str(t), fill=theme.MUTED,
+                      font=theme.font(10, root=master))
+        t += step
+    c.create_line(x0, axis_y, x1, axis_y, fill=theme.BORDER)
+    c.create_text(x1 + 12, axis_y + 14, anchor="w", text=data["unit"], fill=theme.MUTED,
+                  font=theme.font(10, root=master))
 
-        btn = tk.Button(dialog, text="Close", command=dialog.destroy, bg="#37474f", fg="#ffffff", font=("Helvetica", 10, "bold"), padx=16, pady=4)
-        btn.pack(pady=10)
-    except Exception:
-        pass
+    # one lane per kind of interruption
+    for i, (kind, label) in enumerate(KINDS):
+        y = top + i * lane_h + lane_h / 2 - 6
+        colour = theme.KIND_COLORS[kind]
+        c.create_line(x0, y, x1, y, fill=theme.BORDER)
+        c.create_oval(14, y - 5, 24, y + 5, fill=colour, outline="")
+        c.create_text(34, y, anchor="w", text=label, fill=theme.TEXT,
+                      font=theme.font(12, root=master))
+        c.create_text(W - 14, y, anchor="e", text=str(data["counts"][kind]),
+                      fill=theme.MUTED, font=theme.font(12, "bold", root=master))
+        for minute, name in data["events"]:
+            if name == kind:
+                c.create_oval(X(minute) - 7, y - 7, X(minute) + 7, y + 7, fill=colour,
+                              outline=theme.BG, width=2)
+    return c
+
+
+if __name__ == "__main__":
+    # Standalone test:   python3 summary.py
+    demo = [(3, "FIDGET"), (7, "TAB_SWITCH"), (8, "TAB_SWITCH"), (14, "SEAT_LEAVE")]
+    show_summary(demo, session_length=25)
+    tk._default_root.mainloop()
