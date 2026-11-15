@@ -20,6 +20,12 @@ except ImportError:
     ttk = None
     ScrolledText = None
 
+try:
+    import theme
+    HAS_THEME = True
+except ImportError:
+    HAS_THEME = False
+
 
 class AssistantBrain:
     """
@@ -114,11 +120,24 @@ class AssistantBrain:
         phones = sum(1 for m, ev in log if ev == "PHONE")
         total_interruptions = fidgets + seat_leaves + tabs + phones
 
+        try:
+            import summary
+            if hasattr(summary, "summarize"):
+                s_data = summary.summarize(log, session_length=25 if not self.engine.demo_mode else 60, unit="min" if not self.engine.demo_mode else "sec")
+                neutral_sentence = s_data.get("sentence", "")
+            else:
+                neutral_sentence = ""
+        except Exception:
+            neutral_sentence = ""
+
         if total_interruptions == 0:
-            return (
+            msg = (
                 f"You've been focusing for about {elapsed_min} minute(s) with 0 interruptions! "
                 f"You're in the zone. {rem_min} minute(s) remaining."
             )
+            if neutral_sentence:
+                msg += f"\nPattern: {neutral_sentence}"
+            return msg
         else:
             breakdown = []
             if fidgets:
@@ -131,11 +150,14 @@ class AssistantBrain:
                 breakdown.append(f"{phones} phone check{'s' if phones > 1 else ''}")
 
             items_str = ", ".join(breakdown)
-            return (
+            msg = (
                 f"You're at minute {elapsed_min} with {rem_min} minutes to go. "
                 f"Recorded moments so far: {items_str}. "
                 f"Focus is a rhythm — you're doing well, keep it up!"
             )
+            if neutral_sentence:
+                msg += f"\nObservation: {neutral_sentence}"
+            return msg
 
 
 def setup_chat(parent_frame, engine):
@@ -153,44 +175,50 @@ def setup_chat(parent_frame, engine):
 
     assistant = AssistantBrain(engine)
 
-    bg_color = parent_frame.cget("bg") if hasattr(parent_frame, "cget") else "#2d2d2d"
+    bg_color = theme.PANEL if HAS_THEME else (parent_frame.cget("bg") if hasattr(parent_frame, "cget") else "#2d2d2d")
+    fg_title = theme.ACCENT if HAS_THEME else "#e0e0e0"
+    fg_muted = theme.MUTED if HAS_THEME else "#aaaaaa"
+    title_font = theme.font(10, "bold", mono=True, root=parent_frame) if HAS_THEME else ("Helvetica", 11, "bold")
+    sub_font = theme.font(9, root=parent_frame) if HAS_THEME else ("Helvetica", 9)
 
     # Header
     header = tk.Label(
         parent_frame,
-        text="Buddy Assistant Chat",
-        font=("Helvetica", 11, "bold"),
-        fg="#e0e0e0",
+        text="ASSISTANT CHAT",
+        font=title_font,
+        fg=fg_title,
         bg=bg_color,
-        pady=4,
+        pady=2,
     )
-    header.pack(anchor="w", padx=8, pady=(4, 2))
+    header.pack(anchor="w", padx=6, pady=(2, 1))
 
     subtitle = tk.Label(
         parent_frame,
-        text="Type 'Hi ESP' to wake your buddy, or ask questions below:",
-        font=("Helvetica", 9),
-        fg="#aaaaaa",
+        text="Type 'Hi ESP' to wake, or ask 'how am I doing?':",
+        font=sub_font,
+        fg=fg_muted,
         bg=bg_color,
     )
-    subtitle.pack(anchor="w", padx=8, pady=(0, 4))
+    subtitle.pack(anchor="w", padx=6, pady=(0, 4))
 
     # Chat history display
+    chat_bg = "#0d1117" if HAS_THEME else "#1e1e1e"
+    chat_fg = theme.TEXT if HAS_THEME else "#e0e0e0"
     chat_display = ScrolledText(
         parent_frame,
         wrap="word",
         height=8,
-        font=("Helvetica", 9),
-        bg="#1e1e1e",
-        fg="#e0e0e0",
-        insertbackground="#ffffff",
+        font=sub_font,
+        bg=chat_bg,
+        fg=chat_fg,
+        insertbackground=chat_fg,
         relief="flat",
-        bd=2,
-    ) if ScrolledText else tk.Text(parent_frame, wrap="word", height=8, font=("Helvetica", 9), bg="#1e1e1e", fg="#e0e0e0")
-    chat_display.pack(fill="both", expand=True, padx=8, pady=4)
-    chat_display.tag_config("user", foreground="#80d8ff", font=("Helvetica", 9, "bold"))
-    chat_display.tag_config("buddy", foreground="#b9f6ca")
-    chat_display.tag_config("system", foreground="#ffd54f", font=("Helvetica", 8, "italic"))
+        bd=1,
+    ) if ScrolledText else tk.Text(parent_frame, wrap="word", height=8, font=sub_font, bg=chat_bg, fg=chat_fg)
+    chat_display.pack(fill="both", expand=True, padx=4, pady=2)
+    chat_display.tag_config("user", foreground=theme.ACCENT if HAS_THEME else "#80d8ff", font=theme.font(9, "bold", root=parent_frame) if HAS_THEME else ("Helvetica", 9, "bold"))
+    chat_display.tag_config("buddy", foreground="#5eead4" if HAS_THEME else "#b9f6ca")
+    chat_display.tag_config("system", foreground=theme.MUTED if HAS_THEME else "#ffd54f", font=theme.font(8, "italic", root=parent_frame) if HAS_THEME else ("Helvetica", 8, "italic"))
 
     # Initial welcome tip in display
     chat_display.insert("end", "System: Type 'Hi ESP' to wake the buddy.\n", "system")
@@ -198,18 +226,18 @@ def setup_chat(parent_frame, engine):
 
     # Input controls container
     input_box = tk.Frame(parent_frame, bg=bg_color)
-    input_box.pack(fill="x", padx=8, pady=(2, 6))
+    input_box.pack(fill="x", padx=4, pady=(4, 4))
 
     entry = tk.Entry(
         input_box,
-        font=("Helvetica", 10),
-        bg="#3c3f41",
-        fg="#ffffff",
-        insertbackground="#ffffff",
-        relief="groove",
+        font=theme.font(10, root=parent_frame) if HAS_THEME else ("Helvetica", 10),
+        bg=theme.BUTTON if HAS_THEME else "#3c3f41",
+        fg=theme.TEXT if HAS_THEME else "#ffffff",
+        insertbackground=theme.TEXT if HAS_THEME else "#ffffff",
+        relief="flat",
         bd=1,
     )
-    entry.pack(side="left", fill="x", expand=True, padx=(0, 6), ipady=4)
+    entry.pack(side="left", fill="x", expand=True, padx=(0, 6), ipady=3)
 
     def on_send(event=None):
         msg = entry.get().strip()
@@ -231,12 +259,12 @@ def setup_chat(parent_frame, engine):
         input_box,
         text="Send",
         command=on_send,
-        font=("Helvetica", 9, "bold"),
-        fg="#ffffff",
-        bg="#00897b",
-        activebackground="#26a69a",
-        activeforeground="#ffffff",
-        relief="raised",
+        font=theme.font(9, "bold", root=parent_frame) if HAS_THEME else ("Helvetica", 9, "bold"),
+        fg="#04222b" if HAS_THEME else "#ffffff",
+        bg=theme.ACCENT if HAS_THEME else "#00897b",
+        activebackground="#a6f0ff" if HAS_THEME else "#26a69a",
+        activeforeground="#04222b" if HAS_THEME else "#ffffff",
+        relief="flat",
         bd=1,
         padx=12,
         cursor="hand2",

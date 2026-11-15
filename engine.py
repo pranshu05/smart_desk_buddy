@@ -376,6 +376,10 @@ class Engine:
         if not self.tts_enabled or not HAS_PYTTSX3 or not text:
             return
 
+        # Avoid double-speaking if face already has its own active voice worker
+        if hasattr(self.face, "_voice") and getattr(getattr(self.face, "_voice", None), "enabled", False):
+            return
+
         def run_speech():
             with self._tts_lock:
                 try:

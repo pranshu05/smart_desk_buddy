@@ -15,6 +15,12 @@ except ImportError:
     tk = None
     ttk = None
 
+try:
+    import theme
+    HAS_THEME = True
+except ImportError:
+    HAS_THEME = False
+
 
 def setup_settings(parent_frame, engine):
     """
@@ -27,29 +33,35 @@ def setup_settings(parent_frame, engine):
     if tk is None:
         return
 
-    bg_color = parent_frame.cget("bg") if hasattr(parent_frame, "cget") else "#2d2d2d"
+    bg_color = theme.PANEL if HAS_THEME else (parent_frame.cget("bg") if hasattr(parent_frame, "cget") else "#2d2d2d")
+    fg_title = theme.ACCENT if HAS_THEME else "#80cbc4"
+    fg_text = theme.TEXT if HAS_THEME else "#ffffff"
+    fg_muted = theme.MUTED if HAS_THEME else "#aaaaaa"
+    title_font = theme.font(10, "bold", mono=True, root=parent_frame) if HAS_THEME else ("Helvetica", 11, "bold")
+    label_font = theme.font(9, "bold", root=parent_frame) if HAS_THEME else ("Helvetica", 9, "bold")
+    body_font = theme.font(9, root=parent_frame) if HAS_THEME else ("Helvetica", 9)
 
     # Header
     header = tk.Label(
         parent_frame,
-        text="Settings & User Control",
-        font=("Helvetica", 11, "bold"),
-        fg="#e0e0e0",
+        text="SETTINGS & CONTROLS",
+        font=title_font,
+        fg=fg_title,
         bg=bg_color,
-        pady=4,
+        pady=2,
     )
-    header.pack(anchor="w", padx=8, pady=(4, 2))
+    header.pack(anchor="w", padx=6, pady=(2, 1))
 
     # --- Strictness Section ---
     strict_frame = tk.LabelFrame(
         parent_frame,
-        text=" Strictness Level ",
-        font=("Helvetica", 9, "bold"),
-        fg="#80cbc4",
+        text=" Strictness ",
+        font=label_font,
+        fg=fg_title,
         bg=bg_color,
         bd=1,
     )
-    strict_frame.pack(fill="x", padx=8, pady=4)
+    strict_frame.pack(fill="x", padx=4, pady=2)
 
     strict_var = tk.StringVar(value=engine.strictness)
 
@@ -58,8 +70,8 @@ def setup_settings(parent_frame, engine):
         engine.set_strictness(level)
 
     for level, desc in [
-        ("Silent", "Silent (Face changes only, no words)"),
-        ("Gentle", "Gentle (Default companion, never nagging)"),
+        ("Silent", "Silent (Face only, no spoken lines)"),
+        ("Gentle", "Gentle (Default calm companion)"),
         ("Cheeky", "Cheeky (Playful, humorous lines)"),
     ]:
         rb = tk.Radiobutton(
@@ -68,26 +80,26 @@ def setup_settings(parent_frame, engine):
             value=level,
             variable=strict_var,
             command=on_strictness_change,
-            font=("Helvetica", 9),
-            fg="#ffffff",
+            font=body_font,
+            fg=fg_text,
             bg=bg_color,
-            selectcolor="#1e1e1e",
+            selectcolor="#0d1117" if HAS_THEME else "#1e1e1e",
             activebackground=bg_color,
-            activeforeground="#ffffff",
+            activeforeground=fg_text,
             anchor="w",
         )
-        rb.pack(anchor="w", padx=6, pady=2)
+        rb.pack(anchor="w", padx=4, pady=1)
 
     # --- Sensor On/Off Switches Section (Effective immediately) ---
     sensor_frame = tk.LabelFrame(
         parent_frame,
-        text=" Active Sensors (Turn off anytime) ",
-        font=("Helvetica", 9, "bold"),
-        fg="#80cbc4",
+        text=" Active Sensors ",
+        font=label_font,
+        fg=fg_title,
         bg=bg_color,
         bd=1,
     )
-    sensor_frame.pack(fill="x", padx=8, pady=4)
+    sensor_frame.pack(fill="x", padx=4, pady=2)
 
     motion_var = tk.BooleanVar(value=engine.is_sensor_enabled("motion"))
     tab_var = tk.BooleanVar(value=engine.is_sensor_enabled("tab_switch"))
@@ -104,59 +116,59 @@ def setup_settings(parent_frame, engine):
 
     chk_motion = tk.Checkbutton(
         sensor_frame,
-        text="Motion Sensor (Fidget / Leave Seat)",
+        text="Motion (Fidget / Leave seat)",
         variable=motion_var,
         command=on_motion_toggle,
-        font=("Helvetica", 9),
-        fg="#ffffff",
+        font=body_font,
+        fg=fg_text,
         bg=bg_color,
-        selectcolor="#1e1e1e",
+        selectcolor="#0d1117" if HAS_THEME else "#1e1e1e",
         activebackground=bg_color,
-        activeforeground="#ffffff",
+        activeforeground=fg_text,
         anchor="w",
     )
-    chk_motion.pack(anchor="w", padx=6, pady=2)
+    chk_motion.pack(anchor="w", padx=4, pady=1)
 
     chk_tab = tk.Checkbutton(
         sensor_frame,
         text="Tab-Switch Detector",
         variable=tab_var,
         command=on_tab_toggle,
-        font=("Helvetica", 9),
-        fg="#ffffff",
+        font=body_font,
+        fg=fg_text,
         bg=bg_color,
-        selectcolor="#1e1e1e",
+        selectcolor="#0d1117" if HAS_THEME else "#1e1e1e",
         activebackground=bg_color,
-        activeforeground="#ffffff",
+        activeforeground=fg_text,
         anchor="w",
     )
-    chk_tab.pack(anchor="w", padx=6, pady=2)
+    chk_tab.pack(anchor="w", padx=4, pady=1)
 
     chk_phone = tk.Checkbutton(
         sensor_frame,
         text="Phone-Pickup Detector",
         variable=phone_var,
         command=on_phone_toggle,
-        font=("Helvetica", 9),
-        fg="#ffffff",
+        font=body_font,
+        fg=fg_text,
         bg=bg_color,
-        selectcolor="#1e1e1e",
+        selectcolor="#0d1117" if HAS_THEME else "#1e1e1e",
         activebackground=bg_color,
-        activeforeground="#ffffff",
+        activeforeground=fg_text,
         anchor="w",
     )
-    chk_phone.pack(anchor="w", padx=6, pady=2)
+    chk_phone.pack(anchor="w", padx=4, pady=1)
 
     # --- Mode & Voice Section ---
     system_frame = tk.LabelFrame(
         parent_frame,
-        text=" Preferences & Presentation Mode ",
-        font=("Helvetica", 9, "bold"),
-        fg="#80cbc4",
+        text=" Presentation & Voice ",
+        font=label_font,
+        fg=fg_title,
         bg=bg_color,
         bd=1,
     )
-    system_frame.pack(fill="x", padx=8, pady=4)
+    system_frame.pack(fill="x", padx=4, pady=2)
 
     # Demo mode toggle (60s focus, 15s break)
     demo_var = tk.BooleanVar(value=engine.demo_mode)
@@ -166,18 +178,18 @@ def setup_settings(parent_frame, engine):
 
     chk_demo = tk.Checkbutton(
         system_frame,
-        text="Demo Mode (60s focus, 15s break for presentations)",
+        text="Demo Mode (60s focus / 15s break)",
         variable=demo_var,
         command=on_demo_toggle,
-        font=("Helvetica", 9),
-        fg="#ffffff",
+        font=body_font,
+        fg=fg_text,
         bg=bg_color,
-        selectcolor="#1e1e1e",
+        selectcolor="#0d1117" if HAS_THEME else "#1e1e1e",
         activebackground=bg_color,
-        activeforeground="#ffffff",
+        activeforeground=fg_text,
         anchor="w",
     )
-    chk_demo.pack(anchor="w", padx=6, pady=2)
+    chk_demo.pack(anchor="w", padx=4, pady=1)
 
     # Sound / TTS toggle
     tts_var = tk.BooleanVar(value=engine.tts_enabled)
@@ -187,15 +199,15 @@ def setup_settings(parent_frame, engine):
 
     chk_tts = tk.Checkbutton(
         system_frame,
-        text="Spoken Voice / Text-to-Speech (pyttsx3)",
+        text="Spoken Voice / TTS",
         variable=tts_var,
         command=on_tts_toggle,
-        font=("Helvetica", 9),
-        fg="#ffffff",
+        font=body_font,
+        fg=fg_text,
         bg=bg_color,
-        selectcolor="#1e1e1e",
+        selectcolor="#0d1117" if HAS_THEME else "#1e1e1e",
         activebackground=bg_color,
-        activeforeground="#ffffff",
+        activeforeground=fg_text,
         anchor="w",
     )
-    chk_tts.pack(anchor="w", padx=6, pady=2)
+    chk_tts.pack(anchor="w", padx=4, pady=1)

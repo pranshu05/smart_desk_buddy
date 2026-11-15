@@ -3,7 +3,7 @@ main.py - Smart Desk Buddy Phase 3 Connect Entry Point
 Connects Pranshu's Brain (engine, sensors, assistant, settings, rules)
 with Pransu's Face (ui.py, face.py, summary.py) through the Section 4 Contract.
 
-Zero changes to Brain files are required to swap between standalone and integrated.
+Zero changes to Brain logic are required to swap between standalone and integrated.
 """
 
 import sys
@@ -17,6 +17,7 @@ import settings
 try:
     import face
     import summary
+    import theme
     import ui
 except ImportError as e:
     print("=" * 65)
@@ -64,17 +65,33 @@ def main():
     build_result = ui.build_window()
     window, face_instance, sensors_frame, chat_frame, settings_frame = parse_window_contract(build_result)
 
-    # Step 2: Define summary callback from Pransu's summary.py
-    summary_cb = getattr(summary, "show_summary", None)
+    # Step 2: Define summary callback adapting to Pransu's summary.py
+    def on_show_summary(log):
+        if hasattr(summary, "show_summary"):
+            unit = "sec" if getattr(engine, "demo_mode", False) else "min"
+            length = 60 if getattr(engine, "demo_mode", False) else 25
+            summary.show_summary(log, session_length=length, unit=unit, parent=window)
 
     # Step 3: Instantiate Engine with real face and summary callback
     engine = Engine(
         face=face_instance,
-        summary_callback=summary_cb,
+        summary_callback=on_show_summary,
         tk_root=window,
     )
 
-    # Step 4: Populate the three contract frames with our Brain panels
+    # Step 4: Bind face status strip to engine's live countdown and state
+    if hasattr(face_instance, "bind_engine"):
+        face_instance.bind_engine(engine)
+
+    # Step 5: Wire TTS settings toggle to face.set_voice
+    if hasattr(face_instance, "set_voice"):
+        orig_set_tts = engine.set_tts_enabled
+        def hooked_set_tts(on):
+            orig_set_tts(on)
+            face_instance.set_voice(on)
+        engine.set_tts_enabled = hooked_set_tts
+
+    # Step 6: Populate the three contract frames with our Brain panels
     sensors.setup_sensors(sensors_frame, engine, root=window)
     assistant.setup_chat(chat_frame, engine)
     settings.setup_settings(settings_frame, engine)
