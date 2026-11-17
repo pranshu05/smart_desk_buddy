@@ -188,10 +188,17 @@ class Engine:
             self.start_focus()
             return
 
-        # Only react to distractions during active focus session
+        # React to sensor triggers
         if self.state != "focus":
-            # During break: rules state Buddy never reacts to movement
-            if self.state == "break":
+            if self.state == "idle":
+                # Provide instant feedback that the trigger key/button works
+                print(f"[ENGINE] Sensor '{event_name}' tested in IDLE state.")
+                self.face.set_emotion("side_eye")
+                hint = f"Sensor active ({event_name.lower()})! Press Space or click 'Start Focus' to begin session."
+                self.face.say(hint)
+                self._speak(hint)
+            elif self.state == "break":
+                # During break: rules state Buddy never reacts to movement
                 rem_min = self._get_remaining_minutes()
                 emotion, text = rules.get_reaction(
                     event_name,

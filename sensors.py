@@ -104,7 +104,7 @@ def setup_sensors(parent_frame, engine, root=None):
         )
         btn.pack(fill="x", pady=2)
 
-    # Bind keyboard shortcuts
+    # Bind universal keyboard shortcuts
     top_window = root
     if top_window is None and hasattr(parent_frame, "winfo_toplevel"):
         try:
@@ -113,17 +113,63 @@ def setup_sensors(parent_frame, engine, root=None):
             top_window = None
 
     if top_window is not None:
-        def bind_key(event_name, key_char):
-            def handler(event):
-                # Don't trigger if user is currently typing in an Entry or Text widget
-                widget = event.widget
-                widget_class = getattr(widget, "winfo_class", lambda: "")()
-                if widget_class in ("Entry", "Text", "TEntry"):
-                    return
-                engine.handle_event(event_name)
+        def global_key_handler(event):
+            # Don't trigger shortcuts if user is currently typing in a text field
+            widget = getattr(event, "widget", None)
+            widget_class = getattr(widget, "winfo_class", lambda: "")() if widget is not None else ""
+            if widget_class in ("Entry", "Text", "TEntry"):
+                return
 
-            top_window.bind(f"<{key_char.lower()}>", handler)
-            top_window.bind(f"<{key_char.upper()}>", handler)
+            k = (event.keysym or "").lower()
+            ch = (event.char or "").lower()
 
-        for _, event_name, key, _ in sensor_items:
-            bind_key(event_name, key)
+            # 1. Sensor Trigger Keys (F, L, R, T, P)
+            sensor_key_map = {
+                "f": "FIDGET",
+                "l": "SEAT_LEAVE",
+                "r": "SEAT_RETURN",
+                "t": "TAB_SWITCH",
+                "p": "PHONE",
+            }
+            if k in sensor_key_map or ch in sensor_key_map:
+                ev_name = sensor_key_map.get(k) or sensor_key_map.get(ch)
+                print(f"[KEYBOARD TRIGGER] Key '{k or ch}' pressed -> Event '{ev_name}'")
+                engine.handle_event(ev_name)
+                return
+
+            # 2. Emotion Force Keys 1 to 6 (Contract Section 2 & 6)
+            emotion_map = {
+                "1": "idle",
+                "2": "focus",
+                "3": "side_eye",
+                "4": "talking",
+                "5": "happy",
+                "6": "sleepy",
+            }
+            if k in emotion_map or ch in emotion_map:
+                emo = emotion_map.get(k) or emotion_map.get(ch)
+                print(f"[KEYBOARD TRIGGER] Number key '{k or ch}' pressed -> Emotion '{emo}'")
+                if hasattr(engine, "face") and hasattr(engine.face, "set_emotion"):
+                    engine.face.set_emotion(emo)
+                    if hasattr(engine.face, "set_phase"):
+                        engine.face.set_phase(emo.replace("_", " "))
+                return
+
+            # 3. Session Control Keys: Space / B (Start Focus / Take Break)
+            if k in ("space", "b") or ch == "b":
+                if getattr(engine, "state", "idle") == "idle":
+                    print("[KEYBOARD TRIGGER] Space/B pressed -> Starting focus session")
+                    engine.start_focus()
+                else:
+                    print("[KEYBOARD TRIGGER] Space/B pressed -> Taking break now")
+                    engine.handle_event("BREAK_REQUEST")
+                return
+
+            # 4. Summary Screen Key: S
+            if k == "s" or ch == "s":
+                print("[KEYBOARD TRIGGER] 'S' pressed -> End session & Show summary")
+                engine.end_session_and_show_summary()
+                return
+
+        # bind_all ensures keys work regardless of which widget currently has focus
+        top_window.bind_all("<Key>", global_key_handler)
