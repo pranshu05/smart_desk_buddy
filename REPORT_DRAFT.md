@@ -3,7 +3,7 @@
 **Course:** Human-Computer Interaction (HCI)  
 **Date:** November 16, 2026  
 **Authors:** Pranshu (The Brain: Phases 1, 3, 5) & Pransu (The Face: Phases 2, 4, 6)  
-**Artifact / Release:** `v2_final`
+**Artifact / Release:** Final Production Prototype
 
 ---
 

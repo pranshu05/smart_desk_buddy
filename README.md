@@ -115,8 +115,10 @@ Use **Demo Mode** (`60s` focus, `15s` break) for presentations:
 
 ---
 
-## 6. Project Deliverables
+## 6. Project Documentation & Deliverables
 
-- **`v1_working/`**: Baseline snapshot created at hand-off of Phase 3.
-- **`v2_final/`**: Final production release incorporating Phase 4 user testing feedback.
+- **`main.py`**: Integrated application connecting Brain and Face.
+- **`standalone.py`**: Standalone Brain test harness with console FakeFace.
+- **`test_buddy.py`**: Automated test suite (14/14 tests passing).
 - **`REPORT_DRAFT.md`**: Complete 6-section course project report draft.
+- **`agreement_note.txt`**: Phase 1 contract note sent to partner.
