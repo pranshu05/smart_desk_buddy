@@ -90,6 +90,7 @@ def main():
             orig_set_tts(on)
             face_instance.set_voice(on)
         engine.set_tts_enabled = hooked_set_tts
+        engine.set_tts_enabled(True)
 
     # Step 6: Populate the three contract frames with our Brain panels
     sensors.setup_sensors(sensors_frame, engine, root=window)

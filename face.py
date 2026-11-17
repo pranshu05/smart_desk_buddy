@@ -19,8 +19,13 @@ and thin black gaps between them give the lit-dot look. Everything eases
 smoothly between emotions, so changing mood never snaps.
 """
 import math
+import os
 import queue
 import random
+import re
+import subprocess
+import sys
+import tempfile
 import threading
 import time
 import tkinter as tk
@@ -53,45 +58,155 @@ MOUTH_Y = 51
 
 
 class _Voice:
-    """Optional spoken lines using pyttsx3. A silent no-op if it is not installed."""
+    """Robust cross-platform voice worker.
+    Uses pyttsx3 when available; automatically recovers from loop errors;
+    falls back gracefully to system speech tools (aplay, spd-say, say, PowerShell).
+    """
 
     def __init__(self):
         self.enabled = False
         self._queue = queue.Queue()
         self._thread = None
+        self._engine = None
+        self._engine_lock = threading.Lock()
+        self._volume = 1.0
+        self._rate = 160
 
     def enable(self, on):
         if not on:
             self.enabled = False
             return True
+        self.enabled = True
         if self._thread is None:
-            try:
-                import pyttsx3  # noqa: F401  (only checking that it exists)
-            except Exception:
-                return False
             self._thread = threading.Thread(target=self._worker, daemon=True)
             self._thread.start()
-        self.enabled = True
         return True
 
-    def say(self, text):
-        if self.enabled:
-            self._queue.put(text)
-
-    def _worker(self):
-        try:
-            import pyttsx3
-            engine = pyttsx3.init()
-        except Exception:
-            self.enabled = False
-            return
-        while True:
-            text = self._queue.get()
+    def set_volume(self, vol_percent):
+        """Set voice volume between 0 and 100."""
+        self._volume = max(0.0, min(1.0, vol_percent / 100.0))
+        if self._engine:
             try:
-                engine.say(text)
-                engine.runAndWait()
+                self._engine.setProperty("volume", self._volume)
             except Exception:
                 pass
+
+    def say(self, text):
+        if self.enabled and text:
+            self._queue.put(str(text))
+
+    def _worker(self):
+        # Initialize pyttsx3 engine if available
+        try:
+            import pyttsx3
+            self._engine = pyttsx3.init()
+            self._engine.setProperty("rate", self._rate)
+            self._engine.setProperty("volume", self._volume)
+        except Exception:
+            self._engine = None
+
+        while True:
+            text = self._queue.get()
+            self._speak_one(text)
+
+    def _speak_one(self, text):
+        # Strip emojis and non-speech symbols for clean natural synthesizer output
+        clean = re.sub(r'[^\w\s.,!?\'"-]', '', text).strip()
+        if not clean:
+            return
+
+        print(f'[VOICE] Speaking: "{clean}"')
+
+        # 1. Try pyttsx3 direct
+        if self._engine is not None:
+            try:
+                with self._engine_lock:
+                    self._engine.setProperty("volume", self._volume)
+                    self._engine.say(clean)
+                    self._engine.runAndWait()
+                return
+            except Exception:
+                # Reset pyttsx3 _inLoop if a runtime exception occurred
+                try:
+                    if getattr(self._engine, "_inLoop", False):
+                        self._engine.endLoop()
+                except Exception:
+                    pass
+
+        # 2. Try pyttsx3 save_to_file + custom audio player (bypasses direct pulse ALSA error)
+        if self._engine is not None:
+            try:
+                tmp_wav = os.path.join(tempfile.gettempdir(), f"desk_buddy_{os.getpid()}.wav")
+                with self._engine_lock:
+                    self._engine.save_to_file(clean, tmp_wav)
+                    self._engine.runAndWait()
+                if os.path.exists(tmp_wav) and os.path.getsize(tmp_wav) > 0:
+                    if self._play_wav(tmp_wav):
+                        try:
+                            os.remove(tmp_wav)
+                        except Exception:
+                            pass
+                        return
+            except Exception:
+                pass
+
+        # 3. Fallback to OS-native synthesizers
+        if sys.platform.startswith("linux"):
+            try:
+                if subprocess.run(["spd-say", "-w", clean], timeout=8, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
+                    return
+            except Exception:
+                pass
+            try:
+                if subprocess.run(["espeak", clean], timeout=8, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
+                    return
+            except Exception:
+                pass
+        elif sys.platform == "darwin":
+            try:
+                subprocess.run(["say", clean], timeout=8, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return
+            except Exception:
+                pass
+        elif sys.platform == "win32":
+            try:
+                escaped = clean.replace("'", "''")
+                ps_cmd = f"Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak('{escaped}')"
+                subprocess.run(["powershell", "-Command", ps_cmd], timeout=8, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return
+            except Exception:
+                pass
+
+    def _play_wav(self, wav_path):
+        """Play wav file through whatever audio system is available."""
+        # Try aplay default
+        try:
+            res = subprocess.run(["aplay", wav_path], capture_output=True, timeout=8)
+            if res.returncode == 0:
+                return True
+        except Exception:
+            pass
+
+        # Try paplay
+        try:
+            res = subprocess.run(["paplay", wav_path], capture_output=True, timeout=8)
+            if res.returncode == 0:
+                return True
+        except Exception:
+            pass
+
+        # Try discovering hardware PCM cards
+        try:
+            out = subprocess.run(["aplay", "-l"], capture_output=True, text=True, timeout=3).stdout
+            matches = re.findall(r"card\s+(\d+):.*device\s+(\d+):", out)
+            for card, dev in matches:
+                res = subprocess.run(["aplay", "-D", f"plughw:{card},{dev}", wav_path], capture_output=True, timeout=8)
+                if res.returncode == 0:
+                    return True
+        except Exception:
+            pass
+
+        return False
 
 
 class Face(tk.Frame):
@@ -191,8 +306,12 @@ class Face(tk.Frame):
         on_tick(getattr(engine, "remaining_seconds", 0), getattr(engine, "state", "idle"))
 
     def set_voice(self, on=True):
-        """Turn spoken lines on or off. Returns False if pyttsx3 is not installed."""
+        """Turn spoken lines on or off."""
         return self._voice.enable(bool(on))
+
+    def set_volume(self, vol_percent):
+        """Set voice volume between 0 and 100."""
+        self._voice.set_volume(vol_percent)
 
     def destroy(self):
         if self._job is not None:

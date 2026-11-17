@@ -73,7 +73,7 @@ class Engine:
         }
 
         # TTS Sound toggle
-        self.tts_enabled = False
+        self.tts_enabled = True
         self._tts_lock = threading.Lock()
 
         # Session tracking
@@ -384,9 +384,12 @@ class Engine:
         def run_speech():
             with self._tts_lock:
                 try:
+                    clean = re.sub(r'[^\w\s.,!?\'"-]', '', text).strip()
+                    if not clean:
+                        return
                     engine = pyttsx3.init()
                     engine.setProperty("rate", 160)
-                    engine.say(text)
+                    engine.say(clean)
                     engine.runAndWait()
                 except Exception:
                     pass

@@ -46,8 +46,8 @@ class AssistantBrain:
         clean = text.strip()
         lower = clean.lower()
 
-        # 1. Wake word: "Hi ESP"
-        if "hi esp" in lower or "hello esp" in lower or "hey esp" in lower:
+        # 1. Wake word: "Hi ESP" (tolerant of punctuation and greetings)
+        if "hi esp" in lower or "hello esp" in lower or "hey esp" in lower or "esp" in lower:
             self.is_awake = True
             self.engine.face.set_emotion("happy")
             response = "Hi there! I'm awake and ready to keep you company. How can I help?"
@@ -59,45 +59,70 @@ class AssistantBrain:
             return "Zzz... (Type 'Hi ESP' to wake me up!)"
 
         # 2. "start focus"
-        if "start focus" in lower or lower == "focus" or "start session" in lower:
+        if "start focus" in lower or lower == "focus" or "start session" in lower or "start" == lower:
             self.engine.start_focus()
             response = "Starting your focus session now. Calm and locked in!"
             return response
 
         # 3. "take a break" or "take a break now" (Must always work per Section 4 & 5)
-        if "take a break" in lower or "take a break now" in lower or "break now" in lower or lower == "break":
+        if "take a break" in lower or "break" in lower or "pause" in lower or "rest" in lower:
             self.engine.take_break()
             response = "Break time. Your call."
             return response
 
         # 4. "how am I doing?"
-        if "how am i doing" in lower or "how's my focus" in lower or "status" in lower:
-            return self._summarize_performance()
+        if "how am i doing" in lower or "how's my focus" in lower or "status" in lower or "progress" in lower or "stats" in lower:
+            response = self._summarize_performance()
+            # Speak concise summary on face
+            if hasattr(self.engine, "face") and hasattr(self.engine.face, "say"):
+                spoken_line = response.split("\n")[0]
+                self.engine.face.say(spoken_line)
+            return response
 
         # 5. Volume controls
         if "volume up" in lower or "louder" in lower:
             self.volume = min(100, self.volume + 15)
-            return f"Volume increased to {self.volume}%."
+            if hasattr(self.engine.face, "set_volume"):
+                self.engine.face.set_volume(self.volume)
+            response = f"Volume increased to {self.volume}%."
+            self.engine.face.say(f"Volume set to {self.volume} percent.")
+            return response
         if "volume down" in lower or "quieter" in lower or "softer" in lower:
             self.volume = max(10, self.volume - 15)
-            return f"Volume decreased to {self.volume}%."
+            if hasattr(self.engine.face, "set_volume"):
+                self.engine.face.set_volume(self.volume)
+            response = f"Volume decreased to {self.volume}%."
+            self.engine.face.say(f"Volume set to {self.volume} percent.")
+            return response
 
         # 6. Weather
         if "weather" in lower or "forecast" in lower:
-            return "Desk forecast: 22°C and clear indoors. Perfect climate for focused work! ☀️"
+            response = "Desk forecast: 22°C and clear indoors. Perfect climate for focused work! ☀️"
+            self.engine.face.say("Desk forecast: 22 degrees and clear indoors. Perfect climate for focused work!")
+            return response
 
         # 7. Music
         if "music" in lower or "song" in lower or "playlist" in lower:
-            return "Now spinning: Lo-Fi Chill Study Beats & Ambient Rain 🎧"
+            response = "Now spinning: Lo-Fi Chill Study Beats & Ambient Rain 🎧"
+            self.engine.face.say("Now spinning: Lo-Fi Chill Study Beats and Ambient Rain.")
+            return response
+
+        # 8. Summary / End Session
+        if "summary" in lower or "end session" in lower or "finish" in lower:
+            self.engine.face.say("Opening your session summary.")
+            self.engine.end_session_and_show_summary()
+            return "Session ended! Opening your summary timeline now."
 
         # Fallback gentle guide
-        return (
+        fallback_msg = (
             "I can help with:\n"
             "• 'start focus' - begin a focus timer\n"
             "• 'take a break now' - pause for a short rest\n"
             "• 'how am I doing?' - check current session status\n"
-            "• 'weather', 'music', or 'volume up/down'"
+            "• 'weather', 'music', 'volume up/down', or 'summary'"
         )
+        self.engine.face.say("I can help with focus, breaks, status, weather, or music.")
+        return fallback_msg
 
     def _summarize_performance(self) -> str:
         """
