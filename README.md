@@ -88,7 +88,30 @@ python3 ui.py       # Keys: 1-6 change face, Space speaks, S summary, Q quit
 python3 summary.py  # Displays sample end-of-session summary
 ```
 
-### D. Run Automated Test Suite
+### D. Universal Keyboard Shortcuts
+You can trigger all sensors, expressions, and session transitions at any time using your keyboard (active in both GUI and standalone):
+- **Sensor Triggers**:
+  - `F` / `f`: Fidget detected
+  - `L` / `l`: Leave seat (user left desk)
+  - `R` / `r`: Seat return (user back at desk)
+  - `T` / `t`: Tab switch detected (distraction)
+  - `P` / `p`: Phone pickup detected
+- **Facial Expressions (Keys 1–6)**:
+  - `1`: Neutral / Idle
+  - `2`: Focus (calm, working)
+  - `3`: Side-eye (gentle glance)
+  - `4`: Talking (open mouth)
+  - `5`: Happy (warm smile / celebration)
+  - `6`: Sleepy (droopy eyes / resting)
+- **Session Controls**:
+  - `Space` or `B`: Start Focus (when idle) / Take a Break Now (during session)
+  - `S`: End Session & Show Summary screen
+
+*(Note: Shortcuts work universally without needing to click a specific frame first. When typing inside the Assistant Chat box, keystrokes are automatically typed as text.)*
+
+---
+
+### E. Run Automated Test Suite
 Verifies all 14 unit and integration tests across rules, lifecycle, timers, and assistant logic:
 
 ```bash
